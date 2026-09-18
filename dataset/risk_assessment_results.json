@@ -10,6 +10,16 @@
     "detected_by": "AddressSanitizer (heap-buffer-overflow)"
   },
   {
+    "id": "VULN-005",
+    "cwe": "CWE-134",
+    "name": "Use of Externally-Controlled Format String",
+    "exploitability_subscore": 3.89,
+    "impact_subscore": 5.87,
+    "base_score": 9.8,
+    "severity": "CRITICAL",
+    "detected_by": "Code review / static analysis"
+  },
+  {
     "id": "VULN-002",
     "cwe": "CWE-416",
     "name": "Use After Free",
