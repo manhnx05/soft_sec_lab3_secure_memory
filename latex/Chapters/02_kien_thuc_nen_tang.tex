@@ -1,0 +1,193 @@
+% ============================================================
+%  02_kien_thuc_nen_tang.tex  --  Kien thuc nen tang
+% ============================================================
+
+\section{Kiến thức nền tảng}
+\label{sec:kienthuc}
+
+\subsection{Các lớp lỗi quản lý bộ nhớ trong C}
+
+Quản lý bộ nhớ thủ công trong C là nguồn gốc của nhiều lỗ hổng bảo mật nghiêm
+trọng nhất trong lịch sử phần mềm. Ba lớp lỗi được nghiên cứu trong bài thực
+hành này đều thuộc danh sách CWE Top 25 Most Dangerous Software Weaknesses.
+
+\subsubsection{Buffer Overflow -- CWE-121}
+
+Buffer Overflow (tràn bộ đệm) xảy ra khi chương trình ghi dữ liệu vượt ra ngoài
+ranh giới của vùng nhớ đã cấp phát. Trong C, nguy cơ này xuất hiện phổ biến
+nhất khi dùng các hàm sao chép chuỗi không kiểm tra độ dài như \textit{strcpy()},
+\textit{gets()}, \textit{sprintf()} với dữ liệu đầu vào không đáng tin cậy.
+
+\begin{itemize}
+    \item Cơ chế: Vùng đệm được cấp phát $N$ byte; dữ liệu ghi vào có
+          độ dài $M > N$. Phần dữ liệu dư ($M - N$ byte) ghi đè lên vùng nhớ
+          liền kề, có thể là metadata heap, địa chỉ trả về trên stack, hoặc dữ
+          liệu của biến khác.
+    \item Hậu quả: Trong trường hợp nhẹ: dữ liệu bị hỏng, chương trình
+          crash. Trong trường hợp nghiêm trọng: kẻ tấn công có thể ghi đè địa
+          chỉ trả về để điều khiển luồng thực thi (Return-Oriented Programming),
+          dẫn đến thực thi mã tùy ý (Arbitrary Code Execution).
+    \item Trong module Inventory: Hàm \textit{add\_book\_title\_UNSAFE\_HEAP()}
+          dùng \textit{strcpy(buf, title)} với \textit{buf} chỉ có 32 byte. Payload
+          dài hơn 31 ký tự sẽ ghi vượt ranh giới heap buffer.
+\end{itemize}
+
+\subsubsection{Use-After-Free -- CWE-416}
+
+Use-After-Free (sử dụng sau khi giải phóng) xảy ra khi chương trình tiếp tục
+đọc hoặc ghi thông qua một con trỏ trỏ đến vùng nhớ đã được \textit{free()}.
+
+\begin{itemize}
+    \item Cơ chế: Sau khi \textit{free(ptr)}, bộ quản lý heap có thể
+          tái sử dụng vùng nhớ đó cho một allocation khác. Nếu chương trình vẫn
+          đọc/ghi qua \textit{ptr}, nó thực ra đang thao tác trên dữ liệu của
+          đối tượng mới, gây ra hành vi không xác định (Undefined Behavior).
+    \item Hậu quả: Kẻ tấn công có thể kiểm soát nội dung vùng nhớ được
+          cấp phát lại (heap grooming/heap spray), sau đó kích hoạt đọc/ghi qua
+          con trỏ cũ để thực thi mã tùy ý hoặc leo thang đặc quyền.
+    \item Trong module Inventory: Hàm \textit{demo\_use\_after\_free()}
+          gọi \textit{free(b)} rồi ngay sau đó đọc \textit{b->year}. ASan phát
+          hiện đây là \textit{heap-use-after-free}.
+\end{itemize}
+
+\subsubsection{Memory Leak -- CWE-401}
+
+Memory Leak (rò rỉ bộ nhớ) xảy ra khi bộ nhớ được cấp phát động nhưng không
+bao giờ được giải phóng, ngay cả khi không còn tham chiếu nào đến vùng nhớ đó.
+
+\begin{itemize}
+    \item Cơ chế: Mỗi lần vòng lặp chạy, \textit{malloc()} cấp phát
+          một vùng nhớ mới; con trỏ bị ghi đè bởi vòng lặp tiếp theo mà không
+          gọi \textit{free()} trước. Vùng nhớ cũ mất đi tham chiếu, không thể
+          giải phóng và tích lũy liên tục.
+    \item Hậu quả: Trong ứng dụng chạy ngắn, tác động thường không đáng
+          kể. Trong hệ thống phục vụ lâu dài (daemon, server), rò rỉ tích lũy
+          dẫn đến cạn kiệt bộ nhớ và Denial of Service.
+    \item Trong module Inventory: Hàm \textit{demo\_memory\_leak(count)}
+          cấp phát \textit{count} đối tượng \textit{Book} trong vòng lặp nhưng
+          không gọi \textit{free()} ở bất kỳ đâu.
+\end{itemize}
+
+\subsubsection{NULL Pointer Dereference -- CWE-476 (tiềm ẩn)}
+
+Khi \textit{malloc()} thất bại (hệ thống hết bộ nhớ), nó trả về \textit{NULL}.
+Nếu chương trình không kiểm tra và tiếp tục dùng con trỏ NULL để gọi
+\textit{strcpy(NULL, title)}, kết quả là crash ngay lập tức -- một dạng
+Denial of Service đơn giản.
+
+% ────────────────────────────────────────────────────────────
+\subsection{AddressSanitizer}
+
+AddressSanitizer (ASan) là công cụ phân tích bộ nhớ động được phát triển bởi
+Google, tích hợp trong GCC từ phiên bản 4.8 và Clang từ 3.1. Khi biên dịch với
+cờ \textit{-fsanitize=address}, trình biên dịch chèn thêm mã kiểm tra vào mỗi
+thao tác đọc/ghi bộ nhớ và mỗi lời gọi \textit{malloc}/\textit{free}.
+
+\subsubsection{Cơ chế hoạt động}
+
+\begin{itemize}
+    \item Shadow memory: ASan duy trì một vùng bộ nhớ bóng (shadow
+          memory) ánh xạ trạng thái của từng byte: có thể truy cập an toàn,
+          là redzone (vùng bảo vệ) hay đã được giải phóng.
+    \item Redzone: Quanh mỗi vùng cấp phát (cả stack và heap), ASan
+          chèn các vùng đệm bảo vệ được đánh dấu trong shadow memory. Mọi
+          truy cập vào redzone đều sinh lỗi ngay lập tức.
+    \item Quarantine: Sau khi \textit{free()}, vùng nhớ được đặt vào
+          danh sách cách ly và đánh dấu ``đã giải phóng'' trong shadow memory
+          thay vì trả về cho allocator ngay. Mọi truy cập vào vùng này sinh
+          lỗi \textit{heap-use-after-free}.
+    \item LeakSanitizer: Khi bật \textit{ASAN\_OPTIONS=detect\_leaks=1},
+          LeakSanitizer quét toàn bộ bộ nhớ khi chương trình kết thúc, tìm
+          các vùng đã cấp phát nhưng không còn tham chiếu nào trỏ đến.
+\end{itemize}
+
+\subsubsection{Giới hạn quan trọng: tràn trong struct}
+
+ASan đặt redzone ở \emph{biên} của mỗi vùng cấp phát -- không đặt
+\emph{giữa} các trường của cùng một allocation. Xét struct sau:
+
+\begin{lstlisting}[language=C, caption={Struct Book -- hai trường liền kề trong một allocation}]
+typedef struct {
+    char title[32];   /* offset 0..31  */
+    char author[32];  /* offset 32..63 */
+    int  year;
+    int  copies_available;
+} Book;
+\end{lstlisting}
+
+Khi khai báo \textit{Book b} trên stack, toàn bộ struct là một allocation duy
+nhất. Redzone được đặt \emph{trước} \textit{b.title} và \emph{sau}
+\textit{b.copies\_available}. Nếu \textit{strcpy(b.title, payload)} ghi 35 ký
+tự, 3 byte dư ghi vào \textit{b.author[0..2]} -- vẫn trong vùng allocation,
+không đụng đến redzone -- nên ASan không phát hiện.
+
+Ngược lại, khi cấp phát \textit{buf = malloc(32)} riêng biệt, redzone nằm ngay
+sau byte thứ 31 của \textit{buf}. Ghi byte thứ 32 vào đó ngay lập tức đụng
+redzone và ASan dừng chương trình với thông báo \textit{heap-buffer-overflow}.
+
+Kết luận sư phạm: Không có lỗi ASan $\neq$ chương trình an toàn.
+Kiểm tra không đầy đủ (thiếu LeakSanitizer, thiếu kịch bản edge-case) hoặc bố
+trí bộ nhớ nhất định có thể khiến lỗi thật sự tồn tại mà không bị phát hiện.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Nguyên tắc lập trình C an toàn}
+
+Để phòng tránh các lỗi bộ nhớ, cần tuân thủ các nguyên tắc sau:
+
+\begin{itemize}
+    \item Không bao giờ dùng \textit{strcpy} với đầu vào không tin cậy.
+          Thay bằng \textit{snprintf(dst, size, "\%s", src)} -- hàm này luôn giới
+          hạn số byte ghi và đảm bảo byte kết thúc chuỗi \textit{'\textbackslash0'}.
+    \item Kiểm tra giá trị trả về của \textit{malloc}. Nếu \textit{malloc}
+          trả về \textit{NULL}, dừng thực thi hoặc xử lý lỗi trước khi dùng con
+          trỏ.
+    \item Đặt con trỏ về \textit{NULL} ngay sau \textit{free}. Mọi truy
+          cập tiếp theo qua con trỏ NULL sẽ bị phát hiện ngay (NULL dereference
+          crash), thay vì tạo ra hành vi không xác định nguy hiểm hơn.
+    \item Mỗi \textit{malloc} phải có một \textit{free} tương ứng. Cần
+          phân tích rõ ownership: ai cấp phát vùng nhớ, ai chịu trách nhiệm giải
+          phóng, và trong trường hợp lỗi có đường thoát sớm nào bị bỏ sót không.
+    \item Sao chép dữ liệu cần dùng trước khi giải phóng. Nếu cần đọc
+          giá trị từ struct sau này, sao chép vào biến cục bộ trước khi gọi
+          \textit{free()}.
+\end{itemize}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Mô hình đánh giá rủi ro CVSS-lite}
+
+Bài thực hành áp dụng một mô hình đơn giản hóa lấy cảm hứng từ CVSS v3.1
+(Common Vulnerability Scoring System). Đây là mô hình giáo dục, \emph{không}
+phải công thức CVSS chính thức.
+
+\subsubsection{Các trục đánh giá}
+
+\begin{itemize}
+    \item Attack Vector (AV): Mức độ tiếp cận cần thiết để khai thác
+          -- NETWORK (0.85), ADJACENT (0.62), LOCAL (0.55), PHYSICAL (0.20).
+    \item Attack Complexity (AC): Độ phức tạp của cuộc tấn công --
+          LOW (0.77), HIGH (0.44).
+    \item Privileges Required (PR): Quyền hạn cần có -- NONE (0.85),
+          LOW (0.62), HIGH (0.27).
+    \item User Interaction (UI): Có cần tương tác người dùng không --
+          NONE (0.85), REQUIRED (0.62).
+    \item Confidentiality / Integrity / Availability (C/I/A):
+          Mức độ ảnh hưởng đến từng trục -- NONE (0.00), LOW (0.22), HIGH (0.56).
+\end{itemize}
+
+\subsubsection{Công thức tính điểm}
+
+\[
+    \mathrm{Exploitability}_{sub} = 8.22 \times AV \times AC \times PR \times UI
+\]
+\[
+    \mathrm{ISC}_{base} = 1 - (1-C)(1-I)(1-A)
+\]
+\[
+    \mathrm{Impact}_{sub} = 6.42 \times \mathrm{ISC}_{base}
+\]
+\[
+    \mathrm{BaseScore} = \min(\mathrm{Impact}_{sub} + \mathrm{Exploitability}_{sub},\ 10.0)
+\]
+
+Điểm BaseScore được xếp hạng mức độ theo thang CVSS chuẩn: NONE (0.0), LOW
+(0.1--3.9), MEDIUM (4.0--6.9), HIGH (7.0--8.9), CRITICAL (9.0--10.0).
