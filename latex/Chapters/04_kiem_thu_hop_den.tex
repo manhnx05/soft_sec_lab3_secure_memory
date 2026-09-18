@@ -1,0 +1,285 @@
+% ============================================================
+%  04_kiem_thu_hop_den.tex  --  Phat hien loi bang AddressSanitizer
+% ============================================================
+
+\section{Phát hiện lỗi bằng AddressSanitizer}
+\label{sec:hopden}
+
+Kiểm thử hộp đen ở đây được thực hiện theo nghĩa: ta chạy chương trình với
+đầu vào kích hoạt từng lỗi và quan sát \emph{hành vi đầu ra} của ASan mà không
+cần đọc mã nguồn. Hai binary được biên dịch bằng lệnh:
+
+\begin{lstlisting}[language=bash, caption={Biên dịch với AddressSanitizer}]
+gcc -g -Wall -Wextra -fsanitize=address \
+    -o c/vulnerable_inventory c/vulnerable_inventory.c
+gcc -g -Wall -Wextra -fsanitize=address \
+    -o c/secure_inventory    c/secure_inventory.c
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Kịch bản 1: Buffer Overflow (CWE-121)}
+
+\subsubsection{Cách kích hoạt}
+
+Chế độ \textit{overflow} truyền một chuỗi dài hơn 32 byte vào heap buffer:
+
+\begin{lstlisting}[language=bash, caption={Kích hoạt heap buffer overflow}]
+./c/vulnerable_inventory overflow "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+# payload: 39 ky tu 'A', vuot qua gioi han 32 byte
+\end{lstlisting}
+
+\subsubsection{Nguyên nhân trong mã nguồn}
+
+Hàm \textit{add\_book\_title\_UNSAFE\_HEAP()} cấp phát đúng 32 byte
+(\textit{TITLE\_MAX\_HEAP = 32}) nhưng gọi \textit{strcpy(buf, title)} mà không
+kiểm tra \textit{strlen(title)}. Với payload 39 ký tự, 7 byte dư ghi vượt
+ranh giới, đụng vào redzone của ASan.
+
+\subsubsection{Thông báo lỗi ASan (rút gọn)}
+
+\begin{lstlisting}[language=bash, caption={ASan output -- heap-buffer-overflow}]
+=================================================================
+==XXXXX==ERROR: AddressSanitizer: heap-buffer-overflow on address
+    0x602000000030 at pc 0x... bp 0x... sp 0x...
+WRITE of size 40 at 0x602000000030 thread T0
+    #0 0x... in strcpy
+    #1 0x... in add_book_title_UNSAFE_HEAP vulnerable_inventory.c:53
+    #2 0x... in main vulnerable_inventory.c:81
+
+0x602000000030 is located 0 bytes to the right of 32-byte region
+    [0x602000000010, 0x602000000030)
+allocated by thread T0 here:
+    #0 0x... in malloc
+    #1 0x... in add_book_title_UNSAFE_HEAP vulnerable_inventory.c:51
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow
+         vulnerable_inventory.c:53 in add_book_title_UNSAFE_HEAP
+\end{lstlisting}
+
+\subsubsection{Phân tích}
+
+ASan cho biết:
+\begin{itemize}
+    \item Loại lỗi: \textit{heap-buffer-overflow} -- ghi vượt ranh giới heap.
+    \item Địa chỉ lỗi nằm ``0 bytes to the right of 32-byte region'' -- tức là
+          ngay byte đầu tiên sau vùng 32 byte đã cấp phát.
+    \item Stack trace: \textit{main} $\to$ \textit{add\_book\_title\_UNSAFE\_HEAP}
+          $\to$ \textit{strcpy} (dòng 53).
+    \item Tiến trình kết thúc với exit code khác 0.
+\end{itemize}
+
+\subsubsection{Kết quả bản secure}
+
+\begin{lstlisting}[language=bash, caption={Bản secure -- overflow clean}]
+./c/secure_inventory overflow "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+# Output:
+Demo Heap Buffer Overflow (DA SUA), payload dai 39 ky tu:
+  Tieu de (heap, an toan, co the bi cat bot): AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+# Exit code: 0  |  Khong co ERROR trong stderr
+\end{lstlisting}
+
+\textit{snprintf} giới hạn ghi đúng 31 ký tự có nghĩa + 1 byte \textit{'\textbackslash0'},
+chuỗi bị cắt an toàn, không có lỗi ASan.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Kịch bản 2: Use-After-Free (CWE-416)}
+
+\subsubsection{Cách kích hoạt}
+
+\begin{lstlisting}[language=bash, caption={Kích hoạt use-after-free}]
+./c/vulnerable_inventory uaf
+\end{lstlisting}
+
+\subsubsection{Nguyên nhân trong mã nguồn}
+
+Hàm \textit{demo\_use\_after\_free()} gọi \textit{free(b)} ở dòng 66 rồi đọc
+\textit{b->year} ở dòng 68. ASan đặt vùng nhớ đã giải phóng vào quarantine và
+đánh dấu ``freed'' trong shadow memory, nên truy cập kế tiếp bị phát hiện ngay.
+
+\subsubsection{Thông báo lỗi ASan (rút gọn)}
+
+\begin{lstlisting}[language=bash, caption={ASan output -- heap-use-after-free}]
+=================================================================
+==XXXXX==ERROR: AddressSanitizer: heap-use-after-free on address
+    0x602000000010 at pc 0x... bp 0x... sp 0x...
+READ of size 4 at 0x602000000010 thread T0
+    #0 0x... in demo_use_after_free vulnerable_inventory.c:68
+    #1 0x... in main vulnerable_inventory.c:88
+
+0x602000000010 is located 64 bytes inside of 72-byte region
+    [0x602000000010, 0x602000000058)
+freed by thread T0 here:
+    #0 0x... in free
+    #1 0x... in demo_use_after_free vulnerable_inventory.c:66
+
+previously allocated by thread T0 here:
+    #0 0x... in malloc
+    #1 0x... in demo_use_after_free vulnerable_inventory.c:60
+
+SUMMARY: AddressSanitizer: heap-use-after-free
+         vulnerable_inventory.c:68 in demo_use_after_free
+\end{lstlisting}
+
+\subsubsection{Phân tích}
+
+\begin{itemize}
+    \item Loại lỗi: \textit{heap-use-after-free} -- đọc vùng nhớ đã giải phóng.
+    \item ASan cho biết địa chỉ ``located 64 bytes inside of 72-byte region'' --
+          trường \textit{year} nằm ở offset 64 trong struct (sau \textit{title}
+          32 byte và \textit{author} 32 byte).
+    \item Ba mốc thời gian được liệt kê: lúc cấp phát, lúc giải phóng, lúc truy
+          cập lỗi -- cực kỳ hữu ích để debug.
+    \item Stack trace: \textit{main} $\to$ \textit{demo\_use\_after\_free}
+          (dòng 68).
+\end{itemize}
+
+\subsubsection{Kết quả bản secure}
+
+\begin{lstlisting}[language=bash, caption={Bản secure -- UAF clean}]
+./c/secure_inventory uaf
+# Output:
+Demo Use-After-Free (DA SUA):
+  [FIXED] nam xuat ban (da sao chep truoc khi free): 2008
+# Exit code: 0  |  Khong co ERROR trong stderr
+\end{lstlisting}
+
+Dữ liệu được sao chép vào biến \textit{year\_copy} trước khi \textit{free(b)},
+con trỏ \textit{b} được đặt về \textit{NULL}. Không có lỗi ASan.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Kịch bản 3: Memory Leak (CWE-401)}
+
+\subsubsection{Cách kích hoạt}
+
+\begin{lstlisting}[language=bash, caption={Kích hoạt memory leak với LeakSanitizer}]
+ASAN_OPTIONS=detect_leaks=1 ./c/vulnerable_inventory leak
+\end{lstlisting}
+
+\subsubsection{Nguyên nhân trong mã nguồn}
+
+Hàm \textit{demo\_memory\_leak(5)} chạy vòng lặp 5 lần, mỗi lần cấp phát
+một đối tượng \textit{Book} (72 byte) gán cho con trỏ cục bộ \textit{b}.
+Không có lời gọi \textit{free(b)} ở bất kỳ đâu trong hàm. Khi hàm kết thúc,
+5 vùng nhớ (5 $\times$ 72 = 360 byte) bị mất hoàn toàn tham chiếu.
+
+\subsubsection{Thông báo lỗi LeakSanitizer (rút gọn)}
+
+\begin{lstlisting}[language=bash, caption={LeakSanitizer output -- memory leaks detected}]
+Demo Memory Leak (CWE-401):
+  (da cap phat 5 Book, KHONG giai phong -> memory leak)
+
+=================================================================
+==XXXXX==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 360 byte(s) in 5 object(s) allocated from:
+    #0 0x... in malloc
+    #1 0x... in demo_memory_leak vulnerable_inventory.c:76
+    #2 0x... in main vulnerable_inventory.c:93
+
+SUMMARY: AddressSanitizer: 360 byte(s) leaked in 5 allocation(s).
+\end{lstlisting}
+
+\subsubsection{Phân tích}
+
+\begin{itemize}
+    \item Loại lỗi: \textit{detected memory leaks} -- tổng 360 byte rò rỉ.
+    \item LeakSanitizer liệt kê chính xác số đối tượng (5 object), tổng byte (360)
+          và vị trí cấp phát (dòng 76 trong \textit{demo\_memory\_leak}).
+    \item Rò rỉ phân loại là ``Direct leak'' -- tham chiếu trực tiếp bị mất.
+\end{itemize}
+
+\subsubsection{Kết quả bản secure}
+
+\begin{lstlisting}[language=bash, caption={Bản secure -- leak clean}]
+ASAN_OPTIONS=detect_leaks=1 ./c/secure_inventory leak
+# Output:
+Demo Memory Leak (DA SUA):
+  (da cap phat va giai phong day du 5 Book)
+# Exit code: 0  |  Khong co "leaked" trong stderr
+\end{lstlisting}
+
+Tất cả 5 đối tượng và mảng con trỏ được giải phóng đầy đủ trong
+\textit{demo\_memory\_leak\_FIXED()}. LeakSanitizer không báo lỗi.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Bảng tổng hợp kết quả phát hiện lỗi}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|p{1.5cm}|p{1.8cm}|X|p{1.3cm}|}
+\hline
+\textbf{CWE} & \textbf{Kịch bản} & \textbf{Hàm gây lỗi / ASan report} & \textbf{Secure} \\ \hline
+CWE-121 & \textit{overflow} &
+  Hàm: \textit{add\_book\_title\_UNSAFE\_HEAP} \newline
+  Lỗi: \textit{heap-buffer-overflow} -- ghi 40 byte vào vùng 32 byte & Sạch \\ \hline
+CWE-416 & \textit{uaf} &
+  Hàm: \textit{demo\_use\_after\_free} \newline
+  Lỗi: \textit{heap-use-after-free} -- đọc sau \textit{free()} & Sạch \\ \hline
+CWE-401 & \textit{leak} &
+  Hàm: \textit{demo\_memory\_leak} \newline
+  Lỗi: \textit{detected memory leaks} -- 360 byte / 5 objects & Sạch \\ \hline
+\end{tabularx}
+\caption{Tổng hợp 3 lỗi phát hiện bằng ASan trên bản vulnerable}
+\end{table}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Thí nghiệm bổ sung: tràn trong struct không bị ASan bắt}
+
+\subsubsection{Mô tả thí nghiệm}
+
+Đây là điểm sư phạm quan trọng nhất của bài thực hành. Hàm
+\textit{add\_book\_title\_UNSAFE(\&b, payload)} dùng \textit{strcpy} ghi vào
+\textit{b.title[32]} -- trường thuộc struct \textit{Book} được khai báo trên
+stack. Nếu payload dài 35 ký tự, 3 byte dư ghi vào \textit{b.author[0..2]}.
+
+\begin{lstlisting}[language=bash, caption={Tràn struct -- chế độ mặc định (safe\_input)}]
+./c/vulnerable_inventory safe_input "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+# payload: 35 ky tu -> tran 3 byte vao b.author
+# Ket qua: KHONG co bao loi ASan, exit code 0
+\end{lstlisting}
+
+\subsubsection{Giải thích kỹ thuật}
+
+Bố trí bộ nhớ của \textit{Book b} trên stack:
+
+\begin{lstlisting}[language=bash, caption={Bố trí bộ nhớ struct Book trên stack}]
+[ redzone | title[0..31] | author[0..31] | year | copies | redzone ]
+              ^                                              ^
+              |__ ASan chi dat redzone o day _______________|
+                      (bien ngoai cung cua allocation)
+\end{lstlisting}
+
+Ghi 35 byte vào \textit{title}: byte 0--31 vào \textit{title}, byte 32--34 vào
+\textit{author[0..2]}. Tất cả vẫn nằm trong allocation của struct -- không
+đụng đến redzone -- nên ASan không phát hiện. Tuy nhiên, \textit{b.author}
+đã bị ghi đè bởi dữ liệu tấn công.
+
+\subsubsection{So sánh với heap buffer riêng}
+
+Ngược lại, \textit{add\_book\_title\_UNSAFE\_HEAP()} cấp phát \textit{malloc(32)}
+riêng biệt. ASan đặt redzone \emph{ngay sau} byte thứ 31. Mọi ghi từ byte thứ
+32 trở đi đụng ngay redzone $\Rightarrow$ ASan phát hiện tức thì.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|X|p{2.5cm}|p{4cm}|}
+\hline
+\textbf{Tình huống} & \textbf{ASan phát hiện?} & \textbf{Lý do} \\ \hline
+Tràn trong struct trên stack & KHÔNG & Ghi vào field kề bên, vẫn trong cùng allocation; không đụng redzone \\ \hline
+Tràn heap buffer độc lập & CÓ & Redzone nằm ngay sau biên vùng \textit{malloc(32)}; bị đụng ngay lập tức \\ \hline
+\end{tabularx}
+\caption{So sánh khả năng phát hiện của ASan theo bố trí bộ nhớ}
+\end{table}
+
+\subsubsection{Kết luận thực nghiệm}
+
+Kết quả thí nghiệm này minh chứng trực tiếp rằng ASan không phải công
+cụ chứng minh chương trình an toàn. Nó chỉ phát hiện lỗi trong các kịch bản
+được kiểm tra, với bố trí bộ nhớ cụ thể. Lỗi tràn bộ đệm thực sự có thể tồn
+tại và gây hại mà không bao giờ sinh ra thông báo ASan -- đặc biệt khi tràn
+xảy ra giữa các trường bên trong cùng một struct.
+
+Đây là lý do tại sao cần kết hợp nhiều lớp bảo vệ: kiểm tra độ dài đầu vào,
+dùng API an toàn (\textit{snprintf}), code review, phân tích tĩnh, và kiểm
+thử với nhiều kịch bản edge-case.
