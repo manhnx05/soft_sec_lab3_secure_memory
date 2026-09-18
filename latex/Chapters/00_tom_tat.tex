@@ -1,0 +1,98 @@
+% ============================================================
+%  00_tom_tat.tex
+% ============================================================
+
+\section*{Tóm tắt nội dung}
+\addcontentsline{toc}{section}{Tóm tắt nội dung}
+
+Bài thực hành số 03 thuộc học phần CSE703093 -- An toàn phần mềm tập trung vào
+ba chủ đề cốt lõi: phát hiện lỗi bộ nhớ bằng phân tích động, sửa lỗi theo các
+nguyên tắc lập trình C an toàn, và định lượng mức độ rủi ro của từng lỗ hổng
+theo mô hình đơn giản hóa theo tinh thần CVSS.
+
+Module thực hành được xây dựng trong bối cảnh hệ thống SecureSys -- Inventory
+(quản lý kho sách thư viện). File \textit{c/vulnerable\_inventory.c} cố ý chứa
+ba lỗi bộ nhớ kinh điển: Buffer Overflow (CWE-121) thông qua
+\textit{strcpy()} không giới hạn độ dài, Use-After-Free (CWE-416) khi
+tiếp tục đọc con trỏ sau khi đã \textit{free()}, và Memory Leak
+(CWE-401) do thiếu \textit{free()} trong vòng lặp cấp phát. File
+\textit{c/secure\_inventory.c} là bản đã sửa, trong đó \textit{strcpy} được
+thay bằng \textit{snprintf}, con trỏ được đặt về \textit{NULL} ngay sau
+\textit{free}, và mọi vùng nhớ cấp phát đều được giải phóng.
+
+Công cụ AddressSanitizer (ASan) được sử dụng để phát hiện lỗi tại thời
+điểm chạy. Kết quả thực nghiệm: ASan phát hiện đủ 3/3 lỗi trên bản vulnerable
+(\textit{heap-buffer-overflow}, \textit{heap-use-after-free}, memory leaked by
+LeakSanitizer), trong khi bản secure chạy sạch 0/3 lỗi.
+
+Script Python \textit{python/risk\_assessor.py} áp dụng mô hình CVSS-lite để
+tính điểm rủi ro cho năm lỗ hổng. Kết quả: VULN-001 (CWE-121) và VULN-005
+(CWE-134) cùng đạt 9.8/CRITICAL; VULN-002 (CWE-416) đạt 6.9/MEDIUM; VULN-003
+(CWE-401) đạt 5.4/MEDIUM; VULN-004 (CWE-476) đạt 2.5/LOW.
+
+Bộ kiểm thử tự động \textit{tests/test\_memory\_safety.py} gồm 8 bài kiểm tra
+và đạt kết quả 8/8 PASS: 3 bài xác nhận ASan phát hiện lỗi, 3 bài xác nhận
+bản secure sạch, 1 bài kiểm tra tính nhất quán với baseline, 1 bài xác nhận
+VULN-001 là lỗ hổng CRITICAL cao nhất.
+
+Điểm sư phạm quan trọng: tràn bộ đệm \emph{bên trong} một struct (ghi từ trường
+\textit{title} sang \textit{author}) có thể không bị ASan phát hiện vì ASan chỉ
+đặt redzone ở biên vùng cấp phát, không đặt giữa các field của cùng một
+allocation. Đây là lý do vì sao ``chạy không báo lỗi'' không đồng nghĩa với
+``chương trình an toàn''.
+
+% ────────────────────────────────────────────────────────────
+\section*{Mục tiêu học tập}
+\addcontentsline{toc}{section}{Mục tiêu học tập}
+
+\begin{itemize}
+    \item Nhận diện, tái hiện và giải thích cơ chế của ba lớp lỗi bộ nhớ phổ
+          biến trong C: Buffer Overflow (CWE-121), Use-After-Free (CWE-416) và
+          Memory Leak (CWE-401).
+    \item Sử dụng AddressSanitizer (\textit{-fsanitize=address}) kết hợp
+          LeakSanitizer (\textit{ASAN\_OPTIONS=detect\_leaks=1}) để phát hiện lỗi
+          tại runtime và đọc hiểu thông báo lỗi, stack trace.
+    \item Sửa lỗi theo nguyên tắc lập trình C an toàn: dùng \textit{snprintf}
+          thay \textit{strcpy}, đặt con trỏ về \textit{NULL} sau \textit{free},
+          đảm bảo mọi \textit{malloc} có \textit{free} tương ứng, kiểm tra
+          giá trị trả về của \textit{malloc}.
+    \item Áp dụng mô hình đánh giá rủi ro định lượng theo tinh thần CVSS để
+          xếp hạng mức độ nghiêm trọng và ưu tiên thứ tự khắc phục.
+    \item Hiểu rõ giới hạn của ASan: tràn bộ đệm trong cùng một struct
+          allocation không nhất thiết bị phát hiện, vì redzone chỉ bao quanh
+          biên của vùng cấp phát, không phân tách các trường bên trong.
+    \item Thực hành viết và chạy bộ kiểm thử tự động tích hợp cả phát hiện lỗi
+          runtime và kiểm tra tính đúng đắn của mô hình đánh giá rủi ro.
+\end{itemize}
+
+% ────────────────────────────────────────────────────────────
+\section*{Yêu cầu hoàn thiện}
+\addcontentsline{toc}{section}{Yêu cầu hoàn thiện}
+
+\begin{enumerate}
+    \item Bảng lỗi và stack trace: Liệt kê đủ 3 lỗi phát hiện bằng ASan
+          (loại lỗi, hàm gây ra, stack trace rút gọn, hậu quả).
+    \item Giải thích tràn trong struct: Mô tả và chứng minh bằng thực
+          nghiệm tại sao tràn từ \textit{title} sang \textit{author} (cùng một
+          struct trên stack) không bị ASan báo lỗi, trong khi tràn heap buffer
+          riêng bị bắt ngay lập tức.
+    \item Bản vá code: Trình bày giải thích từng sửa đổi trong
+          \textit{secure\_inventory.c} tương ứng với từng lỗi.
+    \item Báo cáo đánh giá rủi ro đầy đủ: Bảng 5 lỗ hổng (bao gồm
+          VULN-005 tự thêm) với điểm số, mức độ và thứ tự ưu tiên khắc phục.
+    \item Log kiểm thử: Toàn bộ 8 test của
+          \textit{test\_memory\_safety.py} đều PASS.
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────
+\section*{Yêu cầu kết quả}
+\addcontentsline{toc}{section}{Yêu cầu kết quả}
+
+\begin{itemize}
+    \item ASan phát hiện đủ 3/3 lỗi trên bản \textit{vulnerable}; xác nhận 0/3
+          lỗi trên bản \textit{secure}.
+    \item \textit{tests/test\_memory\_safety.py} toàn bộ 8 test PASS.
+    \item Kết quả đánh giá rủi ro khớp với
+          \textit{dataset/expected\_risk\_baseline.json} với dung sai tối đa
+          0.05 điểm.
+\end{itemize}
