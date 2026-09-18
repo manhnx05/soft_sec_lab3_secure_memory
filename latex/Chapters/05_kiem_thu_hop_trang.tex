@@ -1,0 +1,261 @@
+% ============================================================
+%  05_kiem_thu_hop_trang.tex  --  Danh gia rui ro (CVSS-lite)
+% ============================================================
+
+\section{Đánh giá rủi ro}
+\label{sec:hoptrang}
+
+Kiểm thử hộp trắng ở đây bao gồm việc đọc mã nguồn, hiểu cơ chế lỗi, và từ đó
+đánh giá định lượng mức độ rủi ro của từng lỗ hổng. Script
+\textit{python/risk\_assessor.py} thực hiện tính toán tự động trên dataset.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Mô hình CVSS-lite được áp dụng}
+
+Script tính hai chỉ số phụ rồi tổng hợp thành điểm cơ sở:
+
+\begin{align}
+    \mathrm{Exploitability}_{sub} &= 8.22 \times AV \times AC \times PR \times UI \\
+    \mathrm{ISC}_{base} &= 1 - (1-C)(1-I)(1-A) \\
+    \mathrm{Impact}_{sub} &= 6.42 \times \mathrm{ISC}_{base} \\
+    \mathrm{BaseScore} &= \min(\mathrm{Impact}_{sub} + \mathrm{Exploitability}_{sub},\ 10.0)
+\end{align}
+
+Trong đó các trọng số được ánh xạ từ chuỗi định tính sang giá trị số:
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|p{3.5cm}|X|}
+\hline
+\textbf{Thuộc tính} & \textbf{Giá trị trọng số} \\ \hline
+Attack Vector (AV)  & NETWORK=0.85, ADJACENT=0.62, LOCAL=0.55, PHYSICAL=0.20 \\ \hline
+Attack Complexity (AC) & LOW=0.77, HIGH=0.44 \\ \hline
+Privileges Required (PR) & NONE=0.85, LOW=0.62, HIGH=0.27 \\ \hline
+User Interaction (UI) & NONE=0.85, REQUIRED=0.62 \\ \hline
+C/I/A Impact & NONE=0.00, LOW=0.22, HIGH=0.56 \\ \hline
+\end{tabularx}
+\caption{Bảng trọng số CVSS-lite}
+\end{table}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Phân tích từng lỗ hổng}
+
+\subsubsection{VULN-001 -- CWE-121: Buffer Overflow (9.8 / CRITICAL)}
+
+\begin{itemize}
+    \item Attack Vector: NETWORK -- lỗi này xảy ra khi dữ liệu đầu vào
+          dài được truyền qua mạng (API, form nhập liệu). Không cần truy cập vật
+          lý hay cục bộ.
+    \item Attack Complexity: LOW -- không cần điều kiện đặc biệt; chỉ
+          cần gửi chuỗi dài hơn 31 ký tự.
+    \item Privileges Required: NONE -- người dùng ẩn danh cũng khai thác
+          được.
+    \item User Interaction: NONE -- không cần nạn nhân thực hiện thao
+          tác nào.
+    \item C/I/A: HIGH/HIGH/HIGH -- buffer overflow có thể dẫn đến thực
+          thi mã tùy ý, toàn quyền đọc/ghi/phá hủy hệ thống.
+\end{itemize}
+
+Tính toán:
+\[
+\mathrm{Exp}_{sub} = 8.22 \times 0.85 \times 0.77 \times 0.85 \times 0.85 = 3.89
+\]
+\[
+\mathrm{ISC} = 1 - (1-0.56)^3 = 1 - 0.085 = 0.915 \quad \Rightarrow \quad
+\mathrm{Imp}_{sub} = 6.42 \times 0.915 = 5.87
+\]
+\[
+\mathrm{BaseScore} = \min(5.87 + 3.89,\ 10) = \min(9.76,\ 10) \approx 9.8
+\]
+
+\subsubsection{VULN-002 -- CWE-416: Use-After-Free (6.9 / MEDIUM)}
+
+\begin{itemize}
+    \item Attack Vector: LOCAL -- kẻ tấn công cần khả năng chạy code
+          trên cùng máy (heap grooming đòi hỏi kiểm soát luồng cấp phát).
+    \item Attack Complexity: HIGH -- cần kỹ thuật heap manipulation
+          phức tạp để kiểm soát nội dung vùng nhớ tái cấp phát.
+    \item Privileges Required: LOW -- cần tài khoản thường (không root).
+    \item User Interaction: NONE.
+    \item C/I/A: HIGH/HIGH/HIGH -- nếu khai thác thành công vẫn dẫn
+          đến thực thi mã tùy ý.
+\end{itemize}
+
+Tính toán:
+\[
+\mathrm{Exp}_{sub} = 8.22 \times 0.55 \times 0.44 \times 0.62 \times 0.85 = 1.05
+\]
+\[
+\mathrm{BaseScore} = \min(5.87 + 1.05,\ 10) = 6.9
+\]
+
+Điểm Impact cao (vì C/I/A đều HIGH) nhưng Exploitability thấp do cần điều kiện
+khai thác phức tạp và quyền LOCAL, kéo điểm tổng xuống mức MEDIUM.
+
+\subsubsection{VULN-003 -- CWE-401: Memory Leak (5.4 / MEDIUM)}
+
+\begin{itemize}
+    \item Attack Vector: LOCAL, AC: LOW, PR: LOW, UI: NONE.
+    \item C/I/A: NONE/NONE/HIGH -- rò rỉ bộ nhớ không trực tiếp làm
+          lộ dữ liệu hay phá vỡ tính toàn vẹn; tác động duy nhất là cạn kiệt
+          tài nguyên (Availability).
+\end{itemize}
+
+Tính toán:
+\[
+\mathrm{Exp}_{sub} = 8.22 \times 0.55 \times 0.77 \times 0.62 \times 0.85 = 1.83
+\]
+\[
+\mathrm{ISC} = 1 - (1-0)(1-0)(1-0.56) = 0.56 \quad \Rightarrow \quad
+\mathrm{Imp}_{sub} = 6.42 \times 0.56 = 3.59 \approx 3.60
+\]
+\[
+\mathrm{BaseScore} = \min(3.60 + 1.83,\ 10) = 5.4
+\]
+
+\subsubsection{VULN-004 -- CWE-476: NULL Pointer Dereference (2.5 / LOW)}
+
+\begin{itemize}
+    \item Attack Vector: LOCAL, AC: HIGH, PR: LOW, UI: NONE.
+    \item C/I/A: NONE/NONE/LOW -- chỉ gây crash (Availability LOW),
+          không làm lộ hay sửa dữ liệu.
+    \item Đây là lỗi \emph{tiềm ẩn}: phát hiện qua code review chứ chưa được
+          ASan bắt (chỉ xảy ra khi \textit{malloc()} thất bại).
+\end{itemize}
+
+Tính toán:
+\[
+\mathrm{Exp}_{sub} = 8.22 \times 0.55 \times 0.44 \times 0.62 \times 0.85 = 1.05
+\]
+\[
+\mathrm{ISC} = 1 - (1)(1)(1-0.22) = 0.22 \quad \Rightarrow \quad
+\mathrm{Imp}_{sub} = 6.42 \times 0.22 = 1.41
+\]
+\[
+\mathrm{BaseScore} = \min(1.41 + 1.05,\ 10) = 2.5
+\]
+
+\subsubsection{VULN-005 -- CWE-134: Format String Bug (9.8 / CRITICAL)}
+
+Đây là lỗ hổng bổ sung được thêm vào dataset để minh họa một lớp lỗi khác
+trong C. Lỗi xảy ra khi chuỗi do người dùng kiểm soát được truyền trực tiếp
+làm format string:
+
+\begin{lstlisting}[language=C, caption={Ví dụ lỗi format string -- không bao giờ làm thế này}]
+/* LOI: user_input co the chua %x, %s, %n ... */
+printf(user_input);         /* KHONG AN TOAN */
+
+/* DUNG: luon dung format string hang so */
+printf("%s", user_input);   /* AN TOAN */
+\end{lstlisting}
+
+Các chỉ thị \textit{\%x} đọc dữ liệu từ stack (rò rỉ thông tin), \textit{\%s}
+có thể đọc tùy ý từ con trỏ trên stack, \textit{\%n} \emph{ghi} số ký tự đã in
+vào một địa chỉ bộ nhớ -- đây là primitive đọc/ghi tùy ý mạnh tương đương buffer
+overflow.
+
+\begin{itemize}
+    \item Attack Vector: NETWORK, AC: LOW, PR: NONE, UI: NONE -- giống VULN-001,
+          hoàn toàn từ xa, không đặc quyền.
+    \item C/I/A: HIGH/HIGH/HIGH -- có thể đọc bộ nhớ tùy ý, ghi bộ nhớ tùy ý
+          qua \textit{\%n}, gây crash.
+\end{itemize}
+
+Tính toán: Cùng vector với VULN-001 $\Rightarrow$ BaseScore = 9.8 (CRITICAL).
+
+% ────────────────────────────────────────────────────────────
+\subsection{Bảng đánh giá rủi ro tổng hợp}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|p{1.6cm}|p{1.7cm}|X|p{0.9cm}|p{1.3cm}|p{1.2cm}|p{1.3cm}|}
+\hline
+\textbf{ID} & \textbf{CWE} & \textbf{Tên lỗ hổng} & \textbf{Exp} & \textbf{Imp} & \textbf{Điểm} & \textbf{Mức độ} \\ \hline
+VULN-001 & CWE-121 & Buffer Overflow & 3.89 & 5.87 & 9.8 & CRITICAL \\ \hline
+VULN-005 & CWE-134 & Format String Bug & 3.89 & 5.87 & 9.8 & CRITICAL \\ \hline
+VULN-002 & CWE-416 & Use-After-Free & 1.05 & 5.87 & 6.9 & MEDIUM \\ \hline
+VULN-003 & CWE-401 & Memory Leak & 1.83 & 3.60 & 5.4 & MEDIUM \\ \hline
+VULN-004 & CWE-476 & NULL Ptr Deref & 1.05 & 1.41 & 2.5 & LOW \\ \hline
+\end{tabularx}
+\caption{Kết quả đánh giá rủi ro CVSS-lite -- 5 lỗ hổng}
+\end{table}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Thứ tự ưu tiên khắc phục}
+
+\[
+\text{VULN-001} \rightarrow \text{VULN-005} \rightarrow \text{VULN-002}
+\rightarrow \text{VULN-003} \rightarrow \text{VULN-004}
+\]
+
+Cách sắp xếp này phù hợp với nguyên tắc bảo mật thực tế:
+
+\begin{enumerate}
+    \item VULN-001 (Buffer Overflow) -- Ưu tiên số 1 tuyệt đối. Đây là lỗi thật
+          sự hiện diện trong module, có thể bị khai thác từ xa không cần đặc
+          quyền, tiềm năng dẫn đến thực thi mã tùy ý. Sửa bằng cách thay
+          \textit{strcpy} bằng \textit{snprintf}.
+    \item VULN-005 (Format String) -- Cùng điểm 9.8 nhưng là kịch bản mở rộng
+          chưa hiện diện trực tiếp trong code hiện tại; cần lưu ý khi phát triển
+          module logging hoặc hiển thị tên sách.
+    \item VULN-002 (Use-After-Free) -- Điểm Impact cao (5.87) nhưng khai thác
+          phức tạp. Sửa bằng cách sao chép dữ liệu trước \textit{free} và đặt
+          con trỏ về \textit{NULL}.
+    \item VULN-003 (Memory Leak) -- Chỉ ảnh hưởng Availability, không rò rỉ dữ
+          liệu nhạy cảm. Tuy nhiên trong hệ thống chạy liên tục, cần sửa sớm để
+          tránh cạn tài nguyên.
+    \item VULN-004 (NULL Ptr Deref) -- Điểm thấp nhất, chỉ xảy ra khi hệ thống
+          hết bộ nhớ (tình huống hiếm). Thêm kiểm tra \textit{if (!buf)} trước
+          khi dùng con trỏ là đủ.
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Biểu đồ điểm rủi ro}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    xbar,
+    width=0.85\textwidth,
+    height=7.5cm,
+    xlabel={Điểm rủi ro BaseScore},
+    ytick={1,2,3,4,5},
+    yticklabels={VULN-004,VULN-003,VULN-002,VULN-005,VULN-001},
+    xmin=0, xmax=11,
+    nodes near coords,
+    nodes near coords align={horizontal},
+    every node near coord/.append style={font=\footnotesize},
+    bar width=0.45cm,
+    enlarge y limits=0.15,
+    tick label style={font=\small},
+    label style={font=\small},
+]
+\addplot[fill=gray!50] coordinates {
+    (2.5, 1)
+    (5.4, 2)
+    (6.9, 3)
+    (9.8, 4)
+    (9.8, 5)
+};
+\end{axis}
+\end{tikzpicture}
+\caption{Biểu đồ điểm rủi ro CVSS-lite của 5 lỗ hổng}
+\end{figure}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Khuyến nghị khắc phục}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|p{1.6cm}|X|}
+\hline
+\textbf{Lỗ hổng} & \textbf{Hành động khắc phục} \\ \hline
+VULN-001 & Thay toàn bộ \textit{strcpy} bằng \textit{snprintf(dst, sizeof(dst), "\%s", src)}; kiểm tra giá trị trả về; từ chối đầu vào quá dài thay vì im lặng cắt bớt \\ \hline
+VULN-005 & Luôn dùng format string hằng: \textit{printf("\%s", user\_str)} thay vì \textit{printf(user\_str)}; bật cảnh báo \textit{-Wformat-security} trong quá trình biên dịch \\ \hline
+VULN-002 & Sao chép dữ liệu cần thiết trước khi \textit{free()}; đặt con trỏ về \textit{NULL} ngay sau \textit{free()}; sử dụng ownership rõ ràng \\ \hline
+VULN-003 & Đảm bảo mọi nhánh code (kể cả nhánh lỗi) đều giải phóng bộ nhớ; dùng pattern ``cấp phát -- dùng -- giải phóng'' nhất quán \\ \hline
+VULN-004 & Kiểm tra giá trị trả về của \textit{malloc()} trước khi dùng con trỏ; xử lý trường hợp cấp phát thất bại một cách rõ ràng \\ \hline
+\end{tabularx}
+\caption{Khuyến nghị khắc phục cho 5 lỗ hổng}
+\end{table}
