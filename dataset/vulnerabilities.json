@@ -64,6 +64,22 @@
       "availability_impact": "LOW",
       "exploitability": "LOW",
       "detected_by": "Code review / static analysis (Lab 4)"
+    },
+    {
+      "id": "VULN-005",
+      "cwe": "CWE-134",
+      "name": "Use of Externally-Controlled Format String",
+      "location": "printf(user_input) - kịch bản mở rộng của module Inventory",
+      "description": "Nếu chuỗi do người dùng kiểm soát được truyền trực tiếp làm format string, các chỉ thị %x, %s hoặc %n có thể làm lộ dữ liệu, ghi bộ nhớ hoặc gây crash.",
+      "attack_vector": "NETWORK",
+      "attack_complexity": "LOW",
+      "privileges_required": "NONE",
+      "user_interaction": "NONE",
+      "confidentiality_impact": "HIGH",
+      "integrity_impact": "HIGH",
+      "availability_impact": "HIGH",
+      "exploitability": "HIGH",
+      "detected_by": "Code review / static analysis"
     }
   ]
 }
