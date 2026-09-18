@@ -1,0 +1,76 @@
+% ============================================================
+%  01_gioi_thieu.tex  --  Gioi thieu
+% ============================================================
+
+\section{Giới thiệu}
+
+\subsection{Bối cảnh bài toán}
+
+Ngôn ngữ C vẫn được sử dụng rộng rãi trong lập trình hệ thống, nhúng và các
+ứng dụng đòi hỏi hiệu năng cao. Tuy nhiên, C không cung cấp cơ chế kiểm soát
+bộ nhớ tự động, khiến lập trình viên phải tự quản lý toàn bộ vòng đời của vùng
+nhớ -- từ cấp phát đến giải phóng. Khi thao tác này thiếu cẩn thận, các lỗi bộ
+nhớ nghiêm trọng có thể xảy ra: ghi vượt ranh giới bộ đệm làm hỏng dữ liệu lân
+cận hoặc cho phép kẻ tấn công điều khiển luồng thực thi; tiếp tục sử dụng con
+trỏ sau khi vùng nhớ đã được giải phóng tạo ra hành vi không xác định có thể bị
+khai thác; không giải phóng bộ nhớ sau khi dùng xong dẫn đến cạn kiệt tài
+nguyên trong các hệ thống hoạt động lâu dài.
+
+Bài thực hành này được thiết kế trong bối cảnh hệ thống SecureSys --
+một hệ thống quản lý truy cập và giao dịch an toàn. Module được chọn là
+Inventory -- quản lý kho sách thư viện -- vì đây là module đơn giản,
+đủ để minh họa đầy đủ ba lớp lỗi mà không làm phức tạp hoá bài toán. Mỗi cuốn
+sách được lưu trong một struct \textit{Book} gồm tiêu đề, tác giả, năm xuất bản
+và số lượng bản sao hiện có. Hoạt động cốt lõi -- ghi tiêu đề sách -- là điểm
+chèn của cả ba lỗi bộ nhớ.
+
+\subsection{Mục tiêu học tập}
+
+Bài thực hành hướng đến các mục tiêu cụ thể sau:
+
+\begin{itemize}
+    \item Phát hiện lỗi bằng phân tích động: Sử dụng AddressSanitizer
+          (ASan) -- công cụ được tích hợp trực tiếp trong GCC/Clang -- để phát
+          hiện lỗi bộ nhớ tại thời điểm chạy, đọc và phân tích thông báo lỗi
+          cùng stack trace do ASan xuất ra.
+    \item Nhận diện và phân loại lỗi: Ánh xạ từng lỗi tìm thấy sang
+          định danh CWE tương ứng (CWE-121, CWE-416, CWE-401) và giải thích cơ
+          chế khai thác tiềm năng.
+    \item Sửa lỗi theo nguyên tắc lập trình C an toàn: Thay thế các
+          API không an toàn bằng API giới hạn kích thước, kiểm soát quyền sở hữu
+          con trỏ và đảm bảo vòng đời bộ nhớ đúng đắn.
+    \item Hiểu giới hạn của công cụ: Thực nghiệm và giải thích tại sao
+          tràn bộ đệm bên trong cùng một struct không luôn bị ASan phát hiện,
+          trong khi tràn trên heap buffer riêng biệt luôn bị bắt.
+    \item Đánh giá rủi ro định lượng: Áp dụng mô hình CVSS-lite để
+          tính điểm rủi ro, xếp hạng mức độ nghiêm trọng và đề xuất thứ tự ưu
+          tiên khắc phục cho năm lỗ hổng.
+\end{itemize}
+
+\subsection{Phạm vi bài thực hành}
+
+Bài thực hành bao gồm các thành phần sau:
+
+\begin{itemize}
+    \item Mã nguồn C: Hai file song song --
+          \textit{c/vulnerable\_inventory.c} chứa ba lỗi cố ý và
+          \textit{c/secure\_inventory.c} là bản đã sửa. Cả hai hỗ trợ ba chế độ
+          dòng lệnh: \textit{overflow}, \textit{uaf}, \textit{leak}.
+    \item Dataset lỗ hổng: File \textit{dataset/vulnerabilities.json}
+          mô tả năm lỗ hổng (VULN-001 đến VULN-005) với các thuộc tính CVSS-lite
+          (attack vector, complexity, privileges, user interaction, C/I/A impact).
+    \item Script đánh giá rủi ro: \textit{python/risk\_assessor.py} đọc
+          dataset, tính toán điểm số và xếp hạng mức độ nghiêm trọng.
+    \item Bộ kiểm thử tự động: \textit{tests/test\_memory\_safety.py}
+          với 8 bài kiểm tra tích hợp cả phát hiện lỗi runtime và kiểm tra tính
+          nhất quán của mô hình rủi ro.
+\end{itemize}
+
+\subsection{Cấu trúc báo cáo}
+
+Báo cáo được tổ chức theo trình tự thực hành: Phần~\ref{sec:kienthuc} trình bày
+kiến thức nền tảng về các lớp lỗi và công cụ. Phần~\ref{sec:dacta} đặc tả hệ
+thống và luồng dữ liệu. Phần~\ref{sec:hopden} trình bày kết quả phát hiện lỗi
+bằng ASan kèm stack trace. Phần~\ref{sec:hoptrang} trình bày bản vá code và
+đánh giá rủi ro. Phần~\ref{sec:tudong} tổng hợp kết quả kiểm thử tự động.
+Phần~\ref{sec:ketluan} thảo luận và kết luận.
