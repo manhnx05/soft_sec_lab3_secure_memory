@@ -1,0 +1,179 @@
+% ============================================================
+%  03_dac_ta_he_thong.tex  --  Dac ta he thong va luong du lieu
+% ============================================================
+
+\section{Đặc tả hệ thống và luồng dữ liệu}
+\label{sec:dacta}
+
+\subsection{Kiểu dữ liệu trung tâm}
+
+Module Inventory xây dựng xung quanh kiểu dữ liệu \textit{Book}, được định nghĩa
+giống nhau trong cả hai phiên bản:
+
+\begin{lstlisting}[language=C, caption={Định nghĩa struct Book}]
+#define TITLE_MAX  32
+#define AUTHOR_MAX 32
+
+typedef struct {
+    char title[TITLE_MAX];        /* offset  0 .. 31 */
+    char author[AUTHOR_MAX];      /* offset 32 .. 63 */
+    int  year;                    /* offset 64 .. 67 */
+    int  copies_available;        /* offset 68 .. 71 */
+} Book;
+\end{lstlisting}
+
+Struct có kích thước 72 byte. Hai mảng ký tự 32 byte nằm liền kề là điểm nóng
+của lỗi CWE-121: nếu ghi vào \textit{title} không giới hạn độ dài, byte thứ 32
+trở đi sẽ ghi đè lên \textit{author}.
+
+\subsection{Phiên bản vulnerable -- \textit{vulnerable\_inventory.c}}
+
+File này cố ý chứa ba lỗi bộ nhớ để phục vụ mục đích giáo dục. Ba hàm chứa lỗi
+là:
+
+\subsubsection{(A) CWE-121 -- \textit{add\_book\_title\_UNSAFE\_HEAP()}}
+
+\begin{lstlisting}[language=C, caption={Lỗi CWE-121: strcpy không giới hạn độ dài (heap variant)}]
+char *add_book_title_UNSAFE_HEAP(const char *title) {
+    char *buf = (char *)malloc(TITLE_MAX_HEAP); /* cap phat 32 byte */
+    if (!buf) return NULL;
+    strcpy(buf, title); /* !!! KHONG kiem tra do dai nguon !!! */
+    return buf;
+}
+\end{lstlisting}
+
+Nếu \textit{strlen(title) >= 32}, \textit{strcpy} ghi vượt ra ngoài 32 byte đã
+cấp phát, đè lên metadata heap hoặc dữ liệu của allocation khác.
+
+\subsubsection{(B) CWE-416 -- \textit{demo\_use\_after\_free()}}
+
+\begin{lstlisting}[language=C, caption={Lỗi CWE-416: truy cập con trỏ sau free()}]
+void demo_use_after_free(void) {
+    Book *b = (Book *)malloc(sizeof(Book));
+    if (!b) return;
+    strcpy(b->title, "Clean Code");
+    b->year = 2008;
+    free(b);
+    /* LOI: b->year duoc doc sau khi da free(b) */
+    printf("  [UAF] nam xuat ban sau khi free: %d\n", b->year);
+}
+\end{lstlisting}
+
+Sau \textit{free(b)}, vùng nhớ có thể được tái cấp phát cho mục đích khác. Đọc
+\textit{b->year} là hành vi không xác định (Undefined Behavior).
+
+\subsubsection{(C) CWE-401 -- \textit{demo\_memory\_leak()}}
+
+\begin{lstlisting}[language=C, caption={Lỗi CWE-401: vòng lặp cấp phát thiếu free()}]
+void demo_memory_leak(int count) {
+    for (int i = 0; i < count; i++) {
+        Book *b = (Book *)malloc(sizeof(Book));
+        if (!b) continue;
+        b->year = 2000 + i;
+        /* LOI: thieu free(b) -- bo nho bi ro ri sau moi vong lap */
+    }
+}
+\end{lstlisting}
+
+Mỗi vòng lặp cấp phát một đối tượng \textit{Book} (72 byte), gán lại cho con
+trỏ cục bộ \textit{b} ở vòng tiếp theo mà không giải phóng vùng nhớ cũ.
+Sau 5 lần gọi: 5 $\times$ 72 = 360 byte rò rỉ.
+
+\subsection{Phiên bản secure -- \textit{secure\_inventory.c}}
+
+Mỗi lỗi được sửa theo nguyên tắc lập trình C an toàn:
+
+\subsubsection{(A) Sửa CWE-121 -- dùng \textit{snprintf}}
+
+\begin{lstlisting}[language=C, caption={Bản vá CWE-121: snprintf giới hạn độ dài}]
+char *add_book_title_SAFE_HEAP(const char *title) {
+    char *buf = (char *)malloc(TITLE_MAX_HEAP);
+    if (!buf) return NULL;
+    snprintf(buf, TITLE_MAX_HEAP, "%s", title); /* an toan: tu dong cat bot */
+    return buf;
+}
+
+int add_book_title_SAFE(Book *b, const char *title) {
+    if (b == NULL || title == NULL) {
+        fprintf(stderr, "[LOI] Tham so NULL\n");
+        return -1;
+    }
+    int written = snprintf(b->title, TITLE_MAX, "%s", title);
+    return (written >= TITLE_MAX) ? 1 : 0; /* tra ve 1 neu bi cat bot */
+}
+\end{lstlisting}
+
+\textit{snprintf} nhận tham số \textit{size} là kích thước tối đa (bao gồm
+\textit{'\textbackslash0'}), đảm bảo không bao giờ ghi quá giới hạn. Nếu chuỗi
+nguồn dài hơn, nó bị cắt bớt an toàn (\textit{truncated}) thay vì gây tràn.
+
+\subsubsection{(B) Sửa CWE-416 -- sao chép trước, NULL hóa sau}
+
+\begin{lstlisting}[language=C, caption={Bản vá CWE-416: sao chép dữ liệu trước free()}]
+void demo_use_after_free_FIXED(void) {
+    Book *b = (Book *)malloc(sizeof(Book));
+    if (!b) { fprintf(stderr, "[LOI] malloc that bai\n"); return; }
+    add_book_title_SAFE(b, "Clean Code");
+    b->year = 2008;
+    int year_copy = b->year;   /* SAO CHEP truoc khi free */
+    free(b);
+    b = NULL;                  /* TRANH dangling pointer */
+    printf("  [FIXED] nam xuat ban (sao chep truoc free): %d\n", year_copy);
+}
+\end{lstlisting}
+
+\subsubsection{(C) Sửa CWE-401 -- giải phóng đầy đủ}
+
+\begin{lstlisting}[language=C, caption={Bản vá CWE-401: free() toàn bộ trong vòng lặp}]
+void demo_memory_leak_FIXED(int count) {
+    Book **books = (Book **)malloc(sizeof(Book *) * (size_t)count);
+    if (!books) { fprintf(stderr, "[LOI] malloc that bai\n"); return; }
+    for (int i = 0; i < count; i++) {
+        books[i] = (Book *)malloc(sizeof(Book));
+        if (!books[i]) continue;
+        books[i]->year = 2000 + i;
+    }
+    for (int i = 0; i < count; i++) {
+        free(books[i]);   /* giai phong tung phan tu */
+        books[i] = NULL;
+    }
+    free(books);           /* giai phong mang con tro */
+}
+\end{lstlisting}
+
+\subsection{Luồng dữ liệu tổng thể}
+
+Luồng thực hiện xuyên suốt toàn bộ bài thực hành:
+
+\begin{enumerate}
+    \item Biên dịch: GCC biên dịch cả hai file C với tùy chọn
+          \textit{-g -Wall -Wextra -fsanitize=address}, tạo hai binary có ASan
+          được nhúng sẵn.
+    \item Chạy kịch bản: Ba kịch bản (\textit{overflow}, \textit{uaf},
+          \textit{leak}) được chạy lần lượt trên \textit{vulnerable\_inventory}.
+          ASan hoặc LeakSanitizer ngắt chương trình và in thông báo lỗi chi tiết.
+    \item Đối chiếu bản secure: Cùng ba kịch bản chạy trên
+          \textit{secure\_inventory} -- kết thúc bình thường (exit code 0), không
+          có thông báo lỗi.
+    \item Đánh giá rủi ro: \textit{python/risk\_assessor.py} đọc
+          \textit{dataset/vulnerabilities.json}, tính điểm CVSS-lite cho năm lỗ
+          hổng, sắp xếp theo điểm giảm dần và ghi kết quả ra
+          \textit{dataset/risk\_assessment\_results.json}.
+    \item Kiểm thử tự động: \textit{tests/test\_memory\_safety.py} tổng
+          hợp cả hai luồng trên, so sánh kết quả với baseline và xác nhận tính
+          nhất quán.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|p{3.5cm}|X|p{3.5cm}|}
+\hline
+\textbf{Thành phần} & \textbf{Mô tả} & \textbf{Đầu ra} \\ \hline
+\textit{vulnerable\_inventory.c} & Mã nguồn C với 3 lỗi cố ý & Binary + ASan output \\ \hline
+\textit{secure\_inventory.c} & Bản đã sửa 3 lỗi & Binary sạch \\ \hline
+\textit{vulnerabilities.json} & Dataset 5 lỗ hổng với thuộc tính CVSS-lite & Đầu vào đánh giá rủi ro \\ \hline
+\textit{risk\_assessor.py} & Tính điểm và xếp hạng rủi ro & \textit{risk\_assessment\_results.json} \\ \hline
+\textit{test\_memory\_safety.py} & 8 bài kiểm thử tự động & 8/8 PASS \\ \hline
+\end{tabularx}
+\caption{Các thành phần của hệ thống thực hành}
+\end{table}
