@@ -1,0 +1,124 @@
+% ============================================================
+%  07_thao_luan.tex  --  Thao luan va ket luan
+% ============================================================
+
+\section{Thảo luận và kết luận}
+\label{sec:ketluan}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Tổng hợp kết quả thực nghiệm}
+
+Bài thực hành đã đạt được đầy đủ các mục tiêu đề ra. Bảng dưới tóm tắt toàn
+bộ kết quả:
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|p{4cm}|X|p{2.5cm}|}
+\hline
+\textbf{Mục tiêu} & \textbf{Kết quả đạt được} & \textbf{Trạng thái} \\ \hline
+Phát hiện 3/3 lỗi trên bản vulnerable & ASan báo đủ heap-buffer-overflow, heap-use-after-free, detected memory leaks & Đạt \\ \hline
+Xác nhận 0/3 lỗi trên bản secure & Ba kịch bản chạy sạch, exit code 0, không có ERROR & Đạt \\ \hline
+8/8 test PASS & Toàn bộ bộ kiểm thử tự động thông qua & Đạt \\ \hline
+Đánh giá rủi ro 5 lỗ hổng & Kết quả khớp baseline $\leq 0.05$ điểm & Đạt \\ \hline
+Giải thích giới hạn ASan & Thực nghiệm tràn trong struct đã thực hiện & Đạt \\ \hline
+\end{tabularx}
+\caption{Tổng hợp kết quả so với mục tiêu}
+\end{table}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Phân tích sâu: vì sao lỗi bộ nhớ vẫn phổ biến?}
+
+Mặc dù các lỗi như CWE-121 đã được biết đến từ thập niên 1980 và có các công
+cụ phát hiện tốt, chúng vẫn xuất hiện thường xuyên trong phần mềm thực tế.
+Có ba nguyên nhân cốt lõi:
+
+\begin{enumerate}
+    \item API kế thừa không an toàn: C không loại bỏ \textit{strcpy},
+          \textit{gets}, \textit{sprintf} khỏi thư viện chuẩn. Code cũ dùng
+          các hàm này vẫn được biên dịch mà không có cảnh báo bắt buộc (trừ
+          khi bật \textit{-Wall -Wextra}).
+    \item Kiểm thử không đủ kịch bản: Lỗi chỉ xuất hiện khi đầu vào vượt ngưỡng
+          nhất định. Kiểm thử thông thường dùng đầu vào hợp lệ không bao giờ
+          kích hoạt lỗi, dẫn đến cảm giác sai về độ an toàn.
+    \item Giới hạn công cụ: ASan phát hiện lỗi tại runtime chỉ trên kịch bản
+          được chạy. Tràn trong struct, lỗi trong nhánh code ít chạy, hay điều
+          kiện race condition có thể không bị bắt.
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Ý nghĩa của mô hình đánh giá rủi ro}
+
+Kết quả CVSS-lite cho thấy không phải lỗi nào cũng nguy hiểm như nhau. Cùng
+là lỗi bộ nhớ, nhưng:
+
+\begin{itemize}
+    \item Buffer Overflow (9.8) và Format String (9.8) nguy hiểm gần gấp 4 lần
+          NULL Pointer Dereference (2.5) vì chúng có thể dẫn đến thực thi mã
+          từ xa không cần đặc quyền.
+    \item Use-After-Free (6.9) có Impact tương đương Buffer Overflow
+          (Impact = 5.87) nhưng Exploitability thấp hơn nhiều (1.05 so với 3.89)
+          do cần tấn công phức tạp hơn.
+    \item Memory Leak (5.4) chỉ ảnh hưởng Availability -- không rò rỉ dữ liệu
+          hay cho phép thực thi mã -- nên được ưu tiên thấp hơn.
+\end{itemize}
+
+Điều này trực tiếp hướng dẫn quyết định phân bổ nguồn lực: vá VULN-001 trước
+vì chi phí khai thác thấp nhất và hậu quả nghiêm trọng nhất.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Hạn chế của bài thực hành}
+
+\begin{itemize}
+    \item Môi trường đơn luồng: Module Inventory không có race condition; lỗi
+          Use-After-Free trong môi trường đa luồng còn phức tạp và nguy hiểm
+          hơn nhiều (TOCTOU, concurrent free).
+    \item Không có fuzzing: Bộ test chỉ kiểm tra ba kịch bản cố định. Fuzzing
+          (AFL, libFuzzer) có thể tìm thêm lỗi ở các edge case không được nghĩ
+          đến.
+    \item Mô hình CVSS-lite đơn giản: Không tính đến Scope (Unchanged/Changed),
+          môi trường triển khai cụ thể, hay các biện pháp kiểm soát bổ sung
+          (WAF, ASLR, stack canary). Điểm thực tế có thể thấp hơn nếu hệ thống
+          có nhiều lớp phòng thủ.
+    \item Phụ thuộc vào ASan: Trên Windows, biên dịch và chạy với
+          \textit{-fsanitize=address} đòi hỏi môi trường đặc biệt (MinGW,
+          Clang-cl). Bài thực hành giả định môi trường Linux/WSL.
+\end{itemize}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Bài học thực tiễn}
+
+Qua bài thực hành, có thể rút ra các bài học sau:
+
+\begin{enumerate}
+    \item ``Secure by default'': Mặc định dùng API an toàn. Thay vì ghi nhớ
+          ``đừng dùng \textit{strcpy}'', hãy thiết lập quy tắc
+          \textit{-Wformat-security}, \textit{-D\_FORTIFY\_SOURCE=2} trong
+          pipeline biên dịch để compiler tự cảnh báo.
+    \item Defense in depth: Không có công cụ nào đủ một mình. ASan + code review
+          + phân tích tĩnh + fuzzing cộng lại mới tạo ra độ bảo phủ đủ tốt.
+    \item Đánh giá rủi ro trước khi vá: Khi có nhiều lỗi, vá tất cả cùng lúc
+          không phải lúc nào cũng khả thi. Điểm CVSS giúp quyết định lỗi nào
+          cần vá ngay hôm nay, lỗi nào có thể đưa vào sprint tiếp theo.
+    \item Kiểm thử sau khi vá: Bản vá đúng không chỉ là ``chạy không báo lỗi
+          ASan'' -- bộ kiểm thử tự động xác nhận hành vi đúng và tính nhất quán
+          của mô hình rủi ro là lớp xác minh thứ hai quan trọng.
+\end{enumerate}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Kết luận}
+
+Bài thực hành 03 đã thực hiện đầy đủ chu trình: tái hiện lỗi $\to$
+phát hiện bằng công cụ $\to$ hiểu cơ chế $\to$ sửa lỗi $\to$
+xác nhận sửa đúng $\to$ đánh giá rủi ro và ưu tiên.
+
+Ba lỗi bộ nhớ kinh điển CWE-121, CWE-416 và CWE-401 đã được tái hiện và phát
+hiện bằng AddressSanitizer, sửa theo nguyên tắc lập trình C an toàn, và xác
+nhận bằng bộ kiểm thử tự động 8/8 PASS. Mô hình CVSS-lite định lượng hóa rủi
+ro, xếp Buffer Overflow là ưu tiên khắc phục cao nhất (9.8/CRITICAL) -- phù
+hợp với thực tiễn bảo mật.
+
+Điểm sư phạm quan trọng nhất: ASan không phải bằng chứng an toàn. Lỗi tràn
+bộ đệm trong cùng một struct allocation có thể tồn tại mà không sinh ra thông
+báo lỗi nào. Đây là lý do tại sao các nguyên tắc lập trình an toàn
+(\textit{snprintf}, kiểm tra độ dài, ownership rõ ràng) phải được áp dụng
+\emph{ngay từ khi viết code}, không phải chỉ khi công cụ báo lỗi.
