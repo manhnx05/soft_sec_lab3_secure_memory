@@ -1,0 +1,189 @@
+% ============================================================
+%  06_kiem_thu_tu_dong.tex  --  Kiem thu tu dong
+% ============================================================
+
+\section{Kết quả kiểm thử tự động}
+\label{sec:tudong}
+
+Bộ kiểm thử tự động được tổ chức trong file
+\textit{tests/test\_memory\_safety.py}. Script này tích hợp cả hai luồng
+kiểm thử: phát hiện lỗi runtime bằng ASan và xác nhận tính nhất quán của
+mô hình đánh giá rủi ro.
+
+% ────────────────────────────────────────────────────────────
+\subsection{Cấu trúc bộ kiểm thử}
+
+\subsubsection{Khởi tạo -- \textit{setup\_module()}}
+
+Trước khi chạy bất kỳ bài kiểm thử nào, \textit{setup\_module()} biên dịch
+cả hai binary bằng GCC với cờ \textit{-fsanitize=address}. Điều này đảm bảo
+mọi kết quả kiểm thử đều dựa trên binary mới nhất từ source hiện tại.
+
+\begin{lstlisting}[language=Python, caption={Hàm biên dịch và chạy binary}]
+def _build(src_name: str, bin_name: str):
+    subprocess.run(
+        ["gcc", "-g", "-fsanitize=address", "-Wall", "-Wextra",
+         "-o", bin_name, src_name],
+        cwd=C_DIR, check=True,
+    )
+
+def _run(bin_name: str, args: list[str]):
+    return subprocess.run(
+        [os.path.join(C_DIR, bin_name)] + args,
+        cwd=C_DIR, capture_output=True, text=True,
+    )
+\end{lstlisting}
+
+\subsubsection{Nhóm 1: Xác nhận lỗi trên bản vulnerable (3 bài)}
+
+\begin{description}
+    \item[\textit{test\_vulnerable\_overflow\_detected}]
+          Chạy \textit{vulnerable\_inventory overflow "A"*39}. Kiểm tra:
+          \textit{returncode != 0} (ASan buộc dừng) và chuỗi
+          \textit{"heap-buffer-overflow"} xuất hiện trong \textit{stderr}.
+
+    \item[\textit{test\_vulnerable\_uaf\_detected}]
+          Chạy \textit{vulnerable\_inventory uaf}. Kiểm tra:
+          \textit{returncode != 0} và \textit{"heap-use-after-free"} trong
+          \textit{stderr}.
+
+    \item[\textit{test\_vulnerable\_leak\_detected}]
+          Chạy \textit{vulnerable\_inventory leak} với
+          \textit{ASAN\_OPTIONS=detect\_leaks=1}. Kiểm tra: chuỗi
+          \textit{"leaked"} xuất hiện trong \textit{stderr} (không yêu cầu
+          exit code khác 0 vì LeakSanitizer có thể không dừng chương trình
+          trên mọi platform).
+\end{description}
+
+\subsubsection{Nhóm 2: Xác nhận bản secure sạch (3 bài)}
+
+\begin{description}
+    \item[\textit{test\_secure\_overflow\_clean}]
+          Chạy \textit{secure\_inventory overflow "A"*39}. Kiểm tra:
+          \textit{returncode == 0} và \textit{"ERROR"} \emph{không} xuất
+          hiện trong \textit{stderr}.
+
+    \item[\textit{test\_secure\_uaf\_clean}]
+          Chạy \textit{secure\_inventory uaf}. Kiểm tra:
+          \textit{returncode == 0} và \textit{"ERROR"} không trong
+          \textit{stderr}.
+
+    \item[\textit{test\_secure\_leak\_clean}]
+          Chạy \textit{secure\_inventory leak} với
+          \textit{ASAN\_OPTIONS=detect\_leaks=1}. Kiểm tra:
+          \textit{returncode == 0} và \textit{"leaked"} không trong
+          \textit{stderr}.
+\end{description}
+
+\subsubsection{Nhóm 3: Kiểm tra mô hình rủi ro (2 bài)}
+
+\begin{description}
+    \item[\textit{test\_risk\_assessment\_matches\_baseline}]
+          Gọi \textit{assess\_all()} để tính điểm rủi ro từ dataset, đọc
+          \textit{expected\_risk\_baseline.json}, so sánh từng cặp kết quả:
+          \textit{id}, \textit{severity} phải khớp chính xác; \textit{base\_score}
+          được phép sai lệch tối đa 0.05 điểm.
+
+    \item[\textit{test\_critical\_vuln\_is\_the\_buffer\_overflow}]
+          Lấy phần tử đầu (điểm cao nhất) từ kết quả \textit{assess\_all()}.
+          Xác nhận \textit{severity == "CRITICAL"} và \textit{cwe == "CWE-121"}.
+\end{description}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Log kiểm thử}
+
+\begin{lstlisting}[language=bash, caption={Log make test -- 8/8 PASS}]
+$ make test
+gcc -g -Wall -Wextra -fsanitize=address \
+    -o c/vulnerable_inventory c/vulnerable_inventory.c
+gcc -g -Wall -Wextra -fsanitize=address \
+    -o c/secure_inventory c/secure_inventory.c
+python3 tests/test_memory_safety.py
+
+[PASS] test_vulnerable_overflow_detected
+[PASS] test_vulnerable_uaf_detected
+[PASS] test_vulnerable_leak_detected
+[PASS] test_secure_overflow_clean
+[PASS] test_secure_uaf_clean
+[PASS] test_secure_leak_clean
+[PASS] test_risk_assessment_matches_baseline
+[PASS] test_critical_vuln_is_the_buffer_overflow
+
+8/8 test da PASS
+\end{lstlisting}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Ảnh log kiểm thử thực tế}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{log_auto_test}
+    \caption{Log kiểm thử tự động -- toàn bộ 8/8 PASS}
+\end{figure}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Phân tích kết quả từng nhóm}
+
+\subsubsection{Nhóm 1: Xác nhận phát hiện lỗi}
+
+Ba bài kiểm thử nhóm 1 đều PASS, xác nhận:
+\begin{itemize}
+    \item ASan phát hiện đủ 3/3 lỗi trên bản vulnerable với các kịch bản được
+          thiết kế.
+    \item Chuỗi nhận dạng lỗi trong stderr khớp chính xác với loại lỗi được
+          khai thác:
+          \begin{itemize}
+              \item \textit{"heap-buffer-overflow"} cho CWE-121
+              \item \textit{"heap-use-after-free"} cho CWE-416
+              \item \textit{"leaked"} cho CWE-401
+          \end{itemize}
+    \item Tiến trình kết thúc với exit code khác 0 (trường hợp overflow và UAF),
+          xác nhận ASan buộc dừng chương trình ngay khi phát hiện lỗi.
+\end{itemize}
+
+\subsubsection{Nhóm 2: Xác nhận bản secure sạch}
+
+Ba bài kiểm thử nhóm 2 đều PASS, xác nhận:
+\begin{itemize}
+    \item Bản secure 0/3 lỗi với cùng ba kịch bản.
+    \item Exit code 0 trong cả ba trường hợp -- chương trình hoàn thành bình
+          thường.
+    \item Không có thông báo ERROR trong stderr -- không có vi phạm bộ nhớ nào
+          được ASan phát hiện.
+    \item Riêng kịch bản overflow: chuỗi bị cắt bớt an toàn xuống tối đa 31
+          ký tự, không gây tràn.
+\end{itemize}
+
+\subsubsection{Nhóm 3: Tính nhất quán của mô hình rủi ro}
+
+Hai bài kiểm thử nhóm 3 đều PASS, xác nhận:
+\begin{itemize}
+    \item Kết quả tính toán của \textit{risk\_assessor.py} khớp với baseline
+          (\textit{expected\_risk\_baseline.json}) với sai lệch $\leq 0.05$
+          điểm cho tất cả 5 lỗ hổng.
+    \item Phần tử điểm cao nhất trong danh sách kết quả là VULN-001 (CWE-121)
+          với mức CRITICAL -- đúng như dự kiến từ phân tích lý thuyết.
+    \item Thứ tự sắp xếp theo điểm giảm dần nhất quán:
+          VULN-001 = VULN-005 (9.8) $>$ VULN-002 (6.9) $>$ VULN-003 (5.4)
+          $>$ VULN-004 (2.5).
+\end{itemize}
+
+% ────────────────────────────────────────────────────────────
+\subsection{Nhận xét về thiết kế bộ kiểm thử}
+
+Bộ kiểm thử có một số điểm thiết kế đáng chú ý:
+
+\begin{itemize}
+    \item Tự biên dịch trước khi chạy: \textit{setup\_module()} đảm bảo binary
+          luôn đồng bộ với source, tránh kết quả sai do dùng binary cũ.
+    \item Tách biệt môi trường cho kịch bản leak: Kịch bản leak dùng
+          \textit{env = dict(os.environ, ASAN\_OPTIONS="detect\_leaks=1")} thay
+          vì set biến môi trường toàn cục, tránh ảnh hưởng đến các kịch bản khác.
+    \item Kiểm tra cả ASan lẫn risk model: Bộ test không chỉ kiểm tra runtime
+          mà còn xác nhận tính nhất quán của mô hình đánh giá rủi ro, tạo thành
+          một vòng xác minh khép kín.
+    \item Hạn chế: Bộ test chỉ kiểm tra các kịch bản được lập trình sẵn; không
+          kiểm tra tràn trong struct (đây là giới hạn của ASan đã phân tích ở
+          Phần~\ref{sec:hopden}). Các edge case khác (payload rỗng, ký tự đặc
+          biệt) không được bao phủ.
+\end{itemize}
